@@ -211,23 +211,25 @@ impl MatrixClient {
     fn poll_sync(&mut self) -> Poll<Option<protocol::SyncResponse>, io::Error> {
         let mut resp = futures::try_ready!(self.sync_client.poll());
         if let Some(ref mut sync_response) = resp {
-            for (room_id, sync) in &mut sync_response.rooms.join {
-                sync.timeline.events.retain(|ev| {
-                    !ev.unsigned
-                        .transaction_id
-                        .as_ref()
-                        .map(|txn_id| txn_id.starts_with("mircd-"))
-                        .unwrap_or(false)
-                });
+            if let Some(rooms) = &mut sync_response.rooms {
+                for (room_id, ref mut sync) in &mut rooms.join {
+                    sync.timeline.events.retain(|ev| {
+                        !ev.unsigned
+                            .transaction_id
+                            .as_ref()
+                            .map(|txn_id| txn_id.starts_with("mircd-"))
+                            .unwrap_or(false)
+                    });
 
-                if let Some(room) = self.rooms.get_mut(room_id) {
-                    room.update_from_sync(sync);
-                    continue;
+                    if let Some(room) = self.rooms.get_mut(room_id) {
+                        room.update_from_sync(sync);
+                        continue;
+                    }
+
+                    // We can't put this in an else because of the mutable borrow in the if condition.
+                    self.rooms
+                        .insert(room_id.clone(), Room::from_sync(room_id.clone(), sync));
                 }
-
-                // We can't put this in an else because of the mutable borrow in the if condition.
-                self.rooms
-                    .insert(room_id.clone(), Room::from_sync(room_id.clone(), sync));
             }
         }
 

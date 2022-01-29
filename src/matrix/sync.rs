@@ -109,7 +109,7 @@ impl MatrixSyncClient {
                 serde_json::from_slice(&response.data).map_err(|e| {
                     io::Error::new(
                         io::ErrorKind::Other,
-                        format!("Sync returned invalid JSON: {}", e),
+                        format!("Sync returned invalid JSON: {} {:?}", e, String::from_utf8(response.data)),
                     )
                 })?
             };

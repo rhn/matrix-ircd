@@ -20,7 +20,7 @@ use serde_json;
 #[derive(Debug, Clone, Deserialize)]
 pub struct SyncResponse {
     pub next_batch: String,
-    pub rooms: RoomsSyncResponse,
+    pub rooms: Option<RoomsSyncResponse>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
