@@ -166,7 +166,7 @@ impl MatrixClient {
     pub fn join_room(
         &mut self,
         room_id: &str,
-    ) -> Box<dyn Future<Item = protocol::RoomJoinResponse, Error = io::Error>> {
+    ) -> Box<dyn Future<Item = Result<protocol::RoomJoinResponse, JsonPostError>, Error = io::Error>> {
         let roomid_encoded = percent_encode(room_id.as_bytes(), PATH_SEGMENT_ENCODE_SET);
         let mut url = self
             .url
@@ -183,7 +183,8 @@ impl MatrixClient {
             &url,
             &protocol::RoomJoinInput {},
         )
-        .map_err(JsonPostError::into_io_error);
+        .map(Ok)
+        .or_else(|e| Ok(Err(e)));
 
         Box::new(f)
     }
@@ -271,7 +272,7 @@ fn do_json_post<I: Serialize, O: DeserializeOwned + 'static>(
 
 quick_error! {
     #[derive(Debug)]
-    enum JsonPostError {
+    pub enum JsonPostError {
         Io(err: io::Error) {
             from()
             description("io error")

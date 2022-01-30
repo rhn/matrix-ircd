@@ -145,26 +145,29 @@ impl<IS: AsyncRead + AsyncWrite + 'static> Bridge<IS> {
 
                 let join_future = self.matrix_client.join_room(channel.as_str())
                     .into_tasked()
-                    .map(move |room_join_response, bridge: &mut Bridge<IS>| {
-                        let room_id = room_join_response.room_id;
+                    .map(move |room_join_response, bridge: &mut Bridge<IS>| match room_join_response {
+                        Ok(room_join_response) => {
+                            let room_id = room_join_response.room_id;
 
-                        task_info!("Joined channel"; "channel" => channel.clone(), "room_id" => room_id.clone());
+                            task_info!("Joined channel"; "channel" => channel.clone(), "room_id" => room_id.clone());
 
-                        if let Some(mapped_channel) = bridge.mappings.room_id_to_channel(&room_id) {
-                            if mapped_channel == &channel {
-                                // We've already joined this channel, most likely we got the sync
-                                // response before the joined response.
-                                // TODO: Do we wan to send something to IRC?
-                                task_trace!("Already in IRC channel");
+                            if let Some(mapped_channel) = bridge.mappings.room_id_to_channel(&room_id) {
+                                if mapped_channel == &channel {
+                                    // We've already joined this channel, most likely we got the sync
+                                    // response before the joined response.
+                                    // TODO: Do we wan to send something to IRC?
+                                    task_trace!("Already in IRC channel");
+                                } else {
+                                    // We respond to the join with a redirect!
+                                    task_trace!("Redirecting channl"; "prev" => channel.clone(), "new" => mapped_channel.clone());
+                                    bridge.irc_conn.write_redirect_join(&channel, mapped_channel);
+                                }
                             } else {
-                                // We respond to the join with a redirect!
-                                task_trace!("Redirecting channl"; "prev" => channel.clone(), "new" => mapped_channel.clone());
-                                bridge.irc_conn.write_redirect_join(&channel, mapped_channel);
+                                task_trace!("Waiting for room to come down sync"; "room_id" => room_id.clone());
+                                bridge.joining_map.insert(room_id, channel);
                             }
-                        } else {
-                            task_trace!("Waiting for room to come down sync"; "room_id" => room_id.clone());
-                            bridge.joining_map.insert(room_id, channel);
-                        }
+                        },
+                        Err(e) => task_warn!("Faile to join channel: {:?}", e),
                     });
                 // TODO: Handle failure of join. Ensure that joining map is cleared.
                 self.spawn(join_future);
