@@ -25,6 +25,7 @@ pub struct SyncResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoomsSyncResponse {
+    #[serde(default)]
     pub join: BTreeMap<String, JoinedRoomSyncResponse>,
 }
 
@@ -97,6 +98,13 @@ pub struct RoomSendInput {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoomSendResponse {
     pub event_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ErrorResponse {
+    pub errcode: String,
+    #[serde(default)]
+    pub error: String,
 }
 
 #[cfg(test)]

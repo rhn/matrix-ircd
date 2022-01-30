@@ -113,12 +113,12 @@ impl MatrixClient {
         )
         .map_err(move |err| match err {
             JsonPostError::Io(e) => LoginError::Io(e),
-            JsonPostError::ErrorRepsonse(code) if code == 401 || code == 403 => {
+            JsonPostError::ErrorRepsonse(code, error) if code == 401 || code == 403 => {
                 LoginError::InvalidPassword
             }
-            JsonPostError::ErrorRepsonse(code) => LoginError::Io(io::Error::new(
+            JsonPostError::ErrorRepsonse(code, error) => LoginError::Io(io::Error::new(
                 io::ErrorKind::Other,
-                format!("Got {} response", code),
+                format!("Got {} response {:?}", code, error),
             )),
         })
         .map(move |response: protocol::LoginResponse| {
@@ -253,7 +253,12 @@ fn do_json_post<I: Serialize, O: DeserializeOwned + 'static>(
         .map_err(|e| e.into())
         .and_then(move |resp| {
             if resp.code != 200 {
-                return Err(JsonPostError::ErrorRepsonse(resp.code));
+                return Err(JsonPostError::ErrorRepsonse(
+                    resp.code,
+                    serde_json::from_slice(&resp.data).map_err(|_| {
+                       JsonPostError::from(io::Error::new(io::ErrorKind::InvalidData, "invalid error response"))
+                    })?,
+                ));
             }
 
             serde_json::from_slice(&resp.data).map_err(|_| {
@@ -273,9 +278,9 @@ quick_error! {
             display("I/O error: {}", err)
             cause(err)
         }
-        ErrorRepsonse(code: u16) {
+        ErrorRepsonse(code: u16, error: protocol::ErrorResponse) {
             description("received non 200 response")
-            display("Received response: {}", code)
+            display("Received response: {} {:?}", code, error)
         }
     }
 }
@@ -284,8 +289,11 @@ impl JsonPostError {
     pub fn into_io_error(self) -> io::Error {
         match self {
             JsonPostError::Io(err) => err,
-            JsonPostError::ErrorRepsonse(code) => {
-                io::Error::new(io::ErrorKind::Other, format!("Received {} response", code))
+            JsonPostError::ErrorRepsonse(code, error) => {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Received {} response: {:?}", code, error),
+                )
             }
         }
     }
