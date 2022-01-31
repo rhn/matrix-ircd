@@ -223,34 +223,7 @@ impl<'a> From<&'a str> for Command {
 
 impl From<String> for Command {
     fn from(cmd: String) -> Command {
-        match cmd.as_ref() {
-            "NICK" => return Command::Nick,
-            "USER" => return Command::User,
-            "JOIN" => return Command::Join,
-            "PART" => return Command::Part,
-            "QUIT" => return Command::Quit,
-            "PING" => return Command::Ping,
-            "PONG" => return Command::Pong,
-            "MODE" => return Command::Mode,
-            "PASS" => return Command::Pass,
-            "PRIVMSG" => return Command::PrivMsg,
-            "TOPIC" => return Command::Topic,
-            "WHO" => return Command::Who,
-            _ => {}
-        }
-
-        if cmd.len() == 3 {
-            if let Ok(c) = cmd.parse() {
-                Command::Numeric {
-                    code: c,
-                    string: [cmd.as_bytes()[0], cmd.as_bytes()[1], cmd.as_bytes()[2]],
-                }
-            } else {
-                Command::Unknown
-            }
-        } else {
-            Command::Unknown
-        }
+       cmd.as_str().into()
     }
 }
 
