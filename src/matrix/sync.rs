@@ -32,7 +32,6 @@ pub struct MatrixSyncClient {
     access_token: String,
     next_token: Option<String>,
     http_client: http::ClientWrapper,
-    current_sync: Mutex<RequestStatus>,
     ctx: ConnectionContext,
 }
 
@@ -51,43 +50,40 @@ impl MatrixSyncClient {
             access_token,
             next_token: None,
             http_client: http::ClientWrapper::new(),
-            current_sync: Mutex::new(RequestStatus::NoRequest),
             ctx,
         }
     }
 
-    pub fn poll_sync(&mut self, cx: &mut Context<'_>) -> Poll<Result<SyncResponse, io::Error>> {
+    pub async fn poll_sync(&mut self) -> Result<SyncResponse, io::Error> {
         task_trace!(self.ctx, "Polled sync");
+        let mut current_sync = RequestStatus::NoRequest;
         loop {
-            let mut current_sync = self.current_sync.lock().unwrap();
-
-            match &mut *current_sync {
+            match &mut current_sync {
                 // There is currently no active request to the matrix server, so we make one
                 RequestStatus::NoRequest => {
                     let new_request_status = self.make_request();
-                    *current_sync = new_request_status;
+                    current_sync = new_request_status;
                     continue;
                 }
                 // We have made a request to the server, now we parse the result
                 RequestStatus::MadeRequest(request) => {
-                    let request = Pin::new(request);
+//                    let request = Pin::new(request);
                     // poll the response from the server to get the body
-                    let response = match request.try_poll(cx) {
-                        Poll::Ready(Ok(r)) => r,
-                        Poll::Ready(Err(e)) => {
+                    let response = match request.await {
+                        Ok(r) => r,
+                        Err(e) => {
                             task_info!(self.ctx, "Error doing sync"; "error" => format!("{}", e));
-                            *current_sync = RequestStatus::NoRequest;
+                            current_sync = RequestStatus::NoRequest;
                             continue;
-                        }
-                        Poll::Pending => return Poll::Pending,
+                        },
                     };
 
                     // error if the response code was not 200 OK
                     if response.status() != hyper::StatusCode::OK {
-                        return Poll::Ready(Err(io::Error::new(
+                        return Err(io::Error::new(
                             io::ErrorKind::Other,
                             format!("Sync returned {}", response.status().as_u16()),
-                        )));
+                        ));
                     }
 
                     // transform the body into a future to contatenate the bytes
@@ -95,17 +91,14 @@ impl MatrixSyncClient {
                     let bytes_fut = hyper::body::to_bytes(response.into_body());
                     let pin_bytes = Box::pin(bytes_fut);
 
-                    *current_sync = RequestStatus::ConcatenatingResponse(pin_bytes);
+                    current_sync = RequestStatus::ConcatenatingResponse(pin_bytes);
                     continue;
                 }
 
                 // We have finished making a request and parsing the response, now we parse the
                 // body
                 RequestStatus::ConcatenatingResponse(pin_bytes) => {
-                    let bytes = match pin_bytes.as_mut().poll(cx) {
-                        Poll::Ready(x) => x.unwrap(),
-                        Poll::Pending => return Poll::Pending,
-                    };
+                    let bytes = pin_bytes.as_mut().await.unwrap();
 
                     // Deserialize the body bytes into a json struct
                     let sync_response: SyncResponse =
@@ -118,12 +111,12 @@ impl MatrixSyncClient {
 
                     task_trace!(self.ctx, "Got sync response"; "next_token" => sync_response.next_batch.clone());
                     self.next_token = Some(sync_response.next_batch.clone());
-                    *current_sync = RequestStatus::NoRequest;
-                    return Poll::Ready(Ok(sync_response));
+                    return Ok(sync_response);
                 }
             };
         }
     }
+
     fn make_request(&self) -> RequestStatus {
         let mut url = self.url.clone();
         url.query_pairs_mut()
@@ -154,22 +147,6 @@ impl std::fmt::Debug for MatrixSyncClient {
             .field("access_token", &self.access_token)
             .field("next_token", &self.next_token)
             .finish()
-    }
-}
-
-impl futures::prelude::Stream for MatrixSyncClient {
-    type Item = Result<SyncResponse, io::Error>;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> futures::task::Poll<Option<Self::Item>> {
-        task_trace!(self.ctx, "Matrix Sync Polled");
-
-        match self.poll_sync(cx) {
-            Poll::Ready(response) => Poll::Ready(Some(response)),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
 

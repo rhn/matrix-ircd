@@ -225,12 +225,8 @@ impl MatrixClient {
 
     pub async fn poll_sync(
         mut self: Pin<&mut Self>,
-    ) -> Option<Result<protocol::SyncResponse, Error>> {
-        let mut sync_response = match self.sync_client.as_mut().next().await? {
-            Ok(x) => x,
-            Err(e) => return Some(Err(e.into())),
-        };
-
+    ) -> Result<protocol::SyncResponse, Error> {
+        let mut sync_response = self.sync_client.as_mut().poll_sync().await?;
         if let Some(ref mut rooms) = &mut sync_response.rooms {
             for (room_id, sync) in &mut rooms.join {
                 sync.timeline.events.retain(|ev| {
@@ -252,7 +248,7 @@ impl MatrixClient {
             }
         }
         
-        Some(Ok(sync_response))
+        Ok(sync_response)
     }
 }
 
