@@ -189,8 +189,10 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
             self.irc_conn.send_ping("HELLO").await;
         }
 
-        for (room_id, sync) in &sync_response.rooms.join {
-            self.handle_room_sync(room_id, sync).await;
+        if let Some(rooms) =  &sync_response.rooms {
+            for (room_id, sync) in &rooms.join {
+                self.handle_room_sync(room_id, sync).await;
+            }
         }
 
         if self.is_first_sync {
