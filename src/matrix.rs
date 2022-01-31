@@ -43,6 +43,9 @@ pub use self::models::{Member, Room};
 
 use crate::ConnectionContext;
 
+
+use futures::StreamExt;
+
 /// A single Matrix session.
 ///
 /// A `MatrixClient` both send requests and outputs a Stream of `SyncResponse`'s. It also keeps track
@@ -220,42 +223,36 @@ impl MatrixClient {
         }
     }
 
-    fn poll_sync(
+    pub async fn poll_sync(
         mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Option<Result<protocol::SyncResponse, Error>>> {
-        let resp = match self.sync_client.as_mut().poll_next(cx)? {
-            Poll::Ready(x) => x,
-            Poll::Pending => return Poll::Pending,
+    ) -> Option<Result<protocol::SyncResponse, Error>> {
+        let mut sync_response = match self.sync_client.as_mut().next().await? {
+            Ok(x) => x,
+            Err(e) => return Some(Err(e.into())),
         };
 
-        if let Some(mut sync_response) = resp {
-            if let Some(ref mut rooms) = &mut sync_response.rooms {
-                for (room_id, sync) in &mut rooms.join {
-                    sync.timeline.events.retain(|ev| {
-                        !ev.unsigned
-                            .transaction_id
-                            .as_ref()
-                            .map(|txn_id| txn_id.starts_with("mircd-"))
-                            .unwrap_or(false)
-                    });
+        if let Some(ref mut rooms) = &mut sync_response.rooms {
+            for (room_id, sync) in &mut rooms.join {
+                sync.timeline.events.retain(|ev| {
+                    !ev.unsigned
+                        .transaction_id
+                        .as_ref()
+                        .map(|txn_id| txn_id.starts_with("mircd-"))
+                        .unwrap_or(false)
+                });
 
-                    if let Some(room) = self.rooms.get_mut(room_id) {
-                        room.update_from_sync(sync);
-                        continue;
-                    }
-
-                    // We can't put this in an else because of the mutable borrow in the if condition.
-                    self.rooms
-                        .insert(room_id.clone(), Room::from_sync(room_id.clone(), sync));
+                if let Some(room) = self.rooms.get_mut(room_id) {
+                    room.update_from_sync(sync);
+                    continue;
                 }
-                Poll::Ready(Some(Ok(sync_response)))
-            } else {
-                Poll::Ready(None)
+
+                // We can't put this in an else because of the mutable borrow in the if condition.
+                self.rooms
+                    .insert(room_id.clone(), Room::from_sync(room_id.clone(), sync));
             }
-        } else {
-            Poll::Ready(None)
         }
+        
+        Some(Ok(sync_response))
     }
 }
 
@@ -309,15 +306,6 @@ quick_error! {
             description("could not serialize / deserialize struct")
             display("Could not serialize request struct or deserialize response")
         }
-    }
-}
-
-impl Stream for MatrixClient {
-    type Item = Result<protocol::SyncResponse, Error>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        task_trace!(self.ctx, "Polled matrix client");
-        self.poll_sync(cx)
     }
 }
 

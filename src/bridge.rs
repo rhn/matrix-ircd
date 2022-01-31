@@ -316,7 +316,7 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
     }
 
     async fn poll_matrix(&mut self) -> Result<(), Error> {
-        while let Some(response) = self.matrix_client.as_mut().next().await {
+        while let Some(response) = self.matrix_client.as_mut().poll_sync().await {
             let response = response?;
             self.handle_sync_response(response).await;
         }
