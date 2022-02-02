@@ -16,8 +16,6 @@
 
 use crate::ConnectionContext;
 
-use futures::stream::StreamExt;
-
 use crate::irc::{IrcCommand, IrcUserConnection};
 
 use crate::matrix::protocol::{JoinedRoomSyncResponse, SyncResponse};
@@ -27,14 +25,31 @@ use crate::matrix::{self, MatrixClient};
 use quick_error::quick_error;
 
 use std::boxed::Box;
+use std::cmp;
 use std::collections::BTreeMap;
 use std::io;
 use std::pin::Pin;
 
 use serde_json::Value;
-
+use time::OffsetDateTime;
 use tokio::io::{AsyncRead, AsyncWrite};
 use url::Url;
+
+
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
+struct Timestamp(i128);
+
+impl Timestamp {
+    fn new_ms(v: i128) -> Self {
+        Self(v * 1000)
+    }
+}
+
+impl From<OffsetDateTime> for Timestamp {
+    fn from(v: OffsetDateTime) -> Self {
+        Self(v.unix_timestamp_nanos())
+    }
+}
 
 /// Bridges a single IRC connection with a matrix session.
 ///
@@ -179,7 +194,11 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
         }
     }
 
-    async fn handle_sync_response(&mut self, sync_response: SyncResponse) {
+    async fn handle_sync_response(
+        &mut self,
+        sync_response: SyncResponse,
+        last_message: Timestamp,
+    ) {
         trace!(self.ctx.logger, "Received sync response"; "batch" => sync_response.next_batch);
 
         if self.is_first_sync {
@@ -191,7 +210,7 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
 
         if let Some(rooms) =  &sync_response.rooms {
             for (room_id, sync) in &rooms.join {
-                self.handle_room_sync(room_id, sync).await;
+                self.handle_room_sync(room_id, sync, last_message).await;
             }
         }
 
@@ -201,7 +220,12 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
         }
     }
 
-    async fn handle_room_sync(&mut self, room_id: &str, sync: &JoinedRoomSyncResponse) {
+    async fn handle_room_sync(
+        &mut self,
+        room_id: &str,
+        sync: &JoinedRoomSyncResponse,
+        last_message: Timestamp,
+    ) {
         let (channel, new) = if let Some(room) = self.matrix_client.get_room(room_id) {
             self.mappings
                 .create_or_get_channel_name_from_matrix(&mut self.irc_conn, room)
@@ -219,7 +243,11 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
             }
         }
 
-        for ev in &sync.timeline.events {
+        let events = sync.timeline
+            .events.iter()
+            .filter(|ev| Timestamp::new_ms(ev.origin_server_ts) > last_message);
+        
+        for ev in events {
             if ev.etype == "m.room.message" {
                 let sender_nick = match self.mappings.get_nick_from_matrix(&ev.sender) {
                     Some(x) => x,
@@ -283,6 +311,7 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
     }
 
     pub async fn run(&mut self, ctx: &ConnectionContext) {
+        let last_message = OffsetDateTime::now_utc().into();
         loop {
             debug!(ctx.logger.as_ref(), "Polling bridge and matrix for changes");
 
@@ -290,7 +319,7 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
                 task_warn!(ctx, "Encounted error while polling IRC connection"; "error" => format!{"{}", e});
                 break;
             }
-            if let Err(e) = self.poll_matrix().await {
+            if let Err(e) = self.poll_matrix(last_message).await {
                 task_warn!(ctx, "Encounted error while polling matrix connection"; "error" => format!{"{}", e});
                 break;
             }
@@ -315,9 +344,9 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
         }
     }
 
-    async fn poll_matrix(&mut self) -> Result<(), Error> {
+    async fn poll_matrix(&mut self, last_message: Timestamp) -> Result<(), Error> {
         let response = self.matrix_client.as_mut().poll_sync().await?;
-        self.handle_sync_response(response).await;
+        self.handle_sync_response(response, last_message).await;
         Ok(())
     }
 }

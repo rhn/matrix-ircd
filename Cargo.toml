@@ -20,6 +20,7 @@ slog = { version = "2.5.2", features = ["max_level_debug"] }
 slog-async = "2.5.0"
 slog-term = "2.4.0"
 url = "1.7.2"
+time = "0.3.*"
 tokio = { version = "0.2.22", features=["full"] }
 hyper = "0.13.6"
 native-tls = "0.2.4"

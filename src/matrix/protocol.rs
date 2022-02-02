@@ -54,6 +54,7 @@ pub struct Event {
     pub state_key: Option<String>,
     pub content: serde_json::Value,
     pub unsigned: EventUnsigned,
+    pub origin_server_ts: i128,
 }
 
 #[derive(Debug, Clone, Deserialize)]
