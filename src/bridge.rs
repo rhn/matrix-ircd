@@ -312,40 +312,62 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
 
     pub async fn run(&mut self, ctx: &ConnectionContext) {
         let last_message = OffsetDateTime::now_utc().into();
+        if self.is_first_sync {
+            debug!(ctx.logger.as_ref(), "Polling Matrix for sync");
+            match self.matrix_client.as_mut().poll_sync().await {
+                Ok(response) => {
+                    self.handle_sync_response(response, last_message).await;
+                },
+                Err(e) => {
+                    task_warn!(
+                        ctx,
+                        "Encounted error while polling matrix connection";
+                        "error" => format!{"{}", e}
+                    );
+                    return;
+                },
+            };
+        }
+
         loop {
             debug!(ctx.logger.as_ref(), "Polling bridge and matrix for changes");
-// FIXME: use tokio::select
-            if let Err(e) = self.poll_irc().await {
-                task_warn!(ctx, "Encounted error while polling IRC connection"; "error" => format!{"{}", e});
+
+            let mut irc = self.irc_conn.as_mut();
+            let r = tokio::select! {
+                irc_cmd = irc.poll() => {
+                    match irc_cmd {
+                        Ok(Some(line)) => {
+                            self.handle_irc_cmd(line).await;
+                            Ok(())
+                        },
+                        Ok(None) => {
+                            self.closed = true;
+                            Ok(())
+                        },
+                        Err(e) => {
+                            task_warn!(ctx, "Encounted error while polling IRC connection"; "error" => format!{"{}", e});
+                            Err(())
+                        },
+                    }
+                }
+                sync_response = self.matrix_client.as_mut().poll_sync() => {
+                    match sync_response {
+                        Ok(response) => {
+                            self.handle_sync_response(dbg!(response), last_message).await;
+                            Ok(())
+                        },
+                        Err(e) => {
+                            task_warn!(ctx, "Encounted error while polling matrix connection"; "error" => format!{"{}", e});
+                            Err(())
+                        },
+                    }
+                }
+            };
+            
+            if let Err(()) = r {
                 break;
             }
-            if let Err(e) = self.poll_matrix(last_message).await {
-                task_warn!(ctx, "Encounted error while polling matrix connection"; "error" => format!{"{}", e});
-                break;
-            }
         }
-    }
-
-    async fn poll_irc(&mut self) -> Result<(), io::Error> {
-        // Don't handle more IRC messages until we have done an initial sync.
-        // This is safe as we will get woken up by the sync.
-        if self.is_first_sync {
-            return Ok(());
-        }
-
-        let poll_response = self.irc_conn.as_mut().poll().await?;
-        if let Some(line) = poll_response {
-            self.handle_irc_cmd(line).await;
-        } else {
-            self.closed = true;
-        }
-        Ok(())
-    }
-
-    async fn poll_matrix(&mut self, last_message: Timestamp) -> Result<(), Error> {
-        let response = self.matrix_client.as_mut().poll_sync().await?;
-        self.handle_sync_response(dbg!(response), last_message).await;
-        Ok(())
     }
 }
 
