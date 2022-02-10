@@ -314,7 +314,7 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
         let last_message = OffsetDateTime::now_utc().into();
         loop {
             debug!(ctx.logger.as_ref(), "Polling bridge and matrix for changes");
-
+// FIXME: use tokio::select
             if let Err(e) = self.poll_irc().await {
                 task_warn!(ctx, "Encounted error while polling IRC connection"; "error" => format!{"{}", e});
                 break;
@@ -333,20 +333,18 @@ impl<IS: AsyncRead + AsyncWrite + 'static + Send> Bridge<IS> {
             return Ok(());
         }
 
-        loop {
-            let poll_response = self.irc_conn.as_mut().poll().await?;
-            if let Some(line) = poll_response {
-                self.handle_irc_cmd(line).await;
-            } else {
-                self.closed = true;
-                return Ok(());
-            }
+        let poll_response = self.irc_conn.as_mut().poll().await?;
+        if let Some(line) = poll_response {
+            self.handle_irc_cmd(line).await;
+        } else {
+            self.closed = true;
         }
+        Ok(())
     }
 
     async fn poll_matrix(&mut self, last_message: Timestamp) -> Result<(), Error> {
         let response = self.matrix_client.as_mut().poll_sync().await?;
-        self.handle_sync_response(response, last_message).await;
+        self.handle_sync_response(dbg!(response), last_message).await;
         Ok(())
     }
 }
