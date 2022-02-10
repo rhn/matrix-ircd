@@ -36,12 +36,12 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use url::Url;
 
 
-#[derive(Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
 struct Timestamp(i128);
 
 impl Timestamp {
     fn new_ms(v: i128) -> Self {
-        Self(v * 1000)
+        Self(v * 1000 * 1000)
     }
 }
 
